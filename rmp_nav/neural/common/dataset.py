@@ -1,21 +1,22 @@
 from __future__ import print_function
+
+import bisect
+import itertools
+import math
+import os
+import time
+
+import h5py
+import numpy as np
+import torch.utils.data as data
+import yaml
 from future.utils import iteritems
 from past.builtins import xrange
-import h5py
-import torch.utils.data as data
-import itertools
-import numpy as np
-import math
-import time
-import bisect
-import os
-import yaml
-from rmp_nav.simulation.gibson_sim_client import GibsonSimClient
-from rmp_nav.simulation import agent_factory
+
 from rmp_nav.common.math_utils import depth_to_xy
 from rmp_nav.common.utils import pprint_dict
-from rmp_nav.simulation import gibson_sim_client, gibson_filler_server
-
+from rmp_nav.simulation import agent_factory, gibson_filler_server, gibson_sim_client
+from rmp_nav.simulation.gibson_sim_client import GibsonSimClient
 
 _LOG_RENDER_TIME = False
 _LOG_EMIT_SAMPLE_TIME = False
@@ -35,9 +36,9 @@ def _randomize_goal(rng, goal):
 
 
 def _randomize_velocity(rng, velocity):
-    '''
+    """
     :return: randomly scaled and rotated velocity. 50% chance of returning the original.
-    '''
+    """
     if rng.uniform(0.0, 1.0) < 0.5:
         return velocity
 
@@ -48,7 +49,7 @@ def _randomize_velocity(rng, velocity):
     angle = rng.uniform(0.0, np.pi * 2.0)
 
     v = velocity * gain
-    return np.array(_rotate(v[0],  v[1], angle), np.float32)
+    return np.array(_rotate(v[0], v[1], angle), np.float32)
 
 
 def _randomize_angular_velocity(rng, angular_vel):
@@ -69,20 +70,24 @@ def _randomize_lighting(rng, img):
 
 
 class DatasetVisual(data.Dataset):
-    def __init__(self, hd5_files, agent_name,
-                 ignore_goal=False,
-                 random_goal=False,
-                 no_waypoint=False,
-                 random_vel=False,
-                 random_lighting=False,
-                 net_config=None,
-                 load_to_mem=False,
-                 maps=None,
-                 max_traj=-1):
-        '''
+    def __init__(
+        self,
+        hd5_files,
+        agent_name,
+        ignore_goal=False,
+        random_goal=False,
+        no_waypoint=False,
+        random_vel=False,
+        random_lighting=False,
+        net_config=None,
+        load_to_mem=False,
+        maps=None,
+        max_traj=-1,
+    ):
+        """
         :param maps: an iterable of strs. If specified only these maps will be considered.
         :param max_traj: the max number of trajectories per training file.
-        '''
+        """
 
         self.hd5_files = sorted(list(hd5_files))
         self.ignore_goal = ignore_goal
@@ -95,61 +100,73 @@ class DatasetVisual(data.Dataset):
 
         # Used in __repr__
         self.g = {
-            'ignore_goal': self.ignore_goal,
-            'random_goal': self.random_goal,
-            'no_waypoint': self.no_waypoint,
-            'random_vel': self.random_vel,
-            'random_lighting': self.random_lighting,
-            'net_config': self.net_config
+            "ignore_goal": self.ignore_goal,
+            "random_goal": self.random_goal,
+            "no_waypoint": self.no_waypoint,
+            "random_vel": self.random_vel,
+            "random_lighting": self.random_lighting,
+            "net_config": self.net_config,
         }
 
         fds = []
         for fn in self.hd5_files:
             try:
-                fds.append(h5py.File(fn, 'r'))
+                fds.append(h5py.File(fn, "r"))
             except:
-                print('unable to open', fn)
+                print("unable to open", fn)
                 raise
 
         def flatten(ll):
             return list(itertools.chain.from_iterable(ll))
 
         def filter_bad_traj(traj_ids):
-            '''
+            """
             Ignore very long trajectories (likely agent getting stuck).
-            '''
+            """
             return [(i, tid) for i, tid in traj_ids if 0 < fds[i][tid].shape[0] < 3000]
 
         # A list of tuples (dataset_idx, trajectory_id)
         self.traj_ids = flatten(
-            zip(itertools.repeat(i),
-                list(fds[i].keys())[0: max_traj if max_traj > 0 else len(fds[i])])
-            for i in xrange(len(fds)))
-        print('total trajectories:', len(self.traj_ids))
+            zip(
+                itertools.repeat(i),
+                list(fds[i].keys())[0 : max_traj if max_traj > 0 else len(fds[i])],
+            )
+            for i in xrange(len(fds))
+        )
+        print("total trajectories:", len(self.traj_ids))
 
-        self.traj_id_to_dset_idx = {traj_id: dset_idx for dset_idx, traj_id in self.traj_ids}
+        self.traj_id_to_dset_idx = {
+            traj_id: dset_idx for dset_idx, traj_id in self.traj_ids
+        }
 
         # Map (dataset_idx, traj_id) to its corresponding map
-        traj_id_map = {(dset_idx, traj_id): fds[dset_idx][traj_id].attrs['map'].decode('ascii')
-                       for dset_idx, traj_id in self.traj_ids}
+        traj_id_map = {
+            (dset_idx, traj_id): fds[dset_idx][traj_id].attrs["map"].decode("ascii")
+            for dset_idx, traj_id in self.traj_ids
+        }
 
         if maps is not None and len(maps) > 0:
             s = set(maps)
             # Filter traj_ids to only include selected maps
-            self.traj_ids = [(dset_idx, traj_id) for dset_idx, traj_id in self.traj_ids
-                             if traj_id_map[(dset_idx, traj_id)] in s]
+            self.traj_ids = [
+                (dset_idx, traj_id)
+                for dset_idx, traj_id in self.traj_ids
+                if traj_id_map[(dset_idx, traj_id)] in s
+            ]
             self.map_names = sorted(list(s))
-            print('only consider these maps:', self.map_names)
-            print('filtered trajectories:', len(self.traj_ids))
+            print("only consider these maps:", self.map_names)
+            print("filtered trajectories:", len(self.traj_ids))
         else:
             self.map_names = sorted(list(set(traj_id_map.values())))
         self.traj_id_map = traj_id_map
 
         self.traj_ids = filter_bad_traj(self.traj_ids)
-        print('good trajectories:', len(self.traj_ids))
+        print("good trajectories:", len(self.traj_ids))
 
         # Map (dataset_idx, traj_id) to trajectory length
-        self.traj_len_dict = {(i, tid): fds[i][tid].shape[0] for i, tid in self.traj_ids}
+        self.traj_len_dict = {
+            (i, tid): fds[i][tid].shape[0] for i, tid in self.traj_ids
+        }
         self.traj_len_cumsum = np.cumsum([self.traj_len_dict[_] for _ in self.traj_ids])
 
         # Compute weights for each sample for weighted random sampling
@@ -159,7 +176,9 @@ class DatasetVisual(data.Dataset):
 
         self.sample_weights = []
         for i in xrange(len(n_sample_per_file)):
-            self.sample_weights.extend([1.0 / n_sample_per_file[i]] * n_sample_per_file[i])
+            self.sample_weights.extend(
+                [1.0 / n_sample_per_file[i]] * n_sample_per_file[i]
+            )
 
         assert len(self.sample_weights) == self.traj_len_cumsum[-1]
         assert np.isclose(sum(self.sample_weights), len(fds))
@@ -177,9 +196,9 @@ class DatasetVisual(data.Dataset):
         # # self.attrs[dset_idx][traj_id] == fds[i][traj_id].attrs
         self.attrs = []  # Per trajactory attributes
         for i in xrange(len(fds)):
-            self.attrs.append({
-                traj_id: dict(fds[i][traj_id].attrs.items()) for traj_id in fds[i]
-            })
+            self.attrs.append(
+                {traj_id: dict(fds[i][traj_id].attrs.items()) for traj_id in fds[i]}
+            )
 
         for fd in fds:
             fd.close()
@@ -192,7 +211,7 @@ class DatasetVisual(data.Dataset):
         # self._malloc_trim()
 
     def __repr__(self):
-        return '%s options\n%s' % (self.__class__.__name__, pprint_dict(self.g))
+        return "%s options\n%s" % (self.__class__.__name__, pprint_dict(self.g))
 
     def _malloc_trim(self):
         """
@@ -200,28 +219,37 @@ class DatasetVisual(data.Dataset):
         datasets form a hdf5 file.
         """
         from ctypes import cdll
-        cdll.LoadLibrary('libc.so.6').malloc_trim(0)
+
+        cdll.LoadLibrary("libc.so.6").malloc_trim(0)
 
     def _set_agent_state(self, sample):
-        pos, depth_local, waypoint_global, velocity_global, heading, angular_velocity = (
-            sample['pos'],
-            sample['depth_local'],
-            sample['waypoint_global'],
-            sample['velocity_global'],
-            sample['heading'],
-            sample['angular_velocity']
+        (
+            pos,
+            depth_local,
+            waypoint_global,
+            velocity_global,
+            heading,
+            angular_velocity,
+        ) = (
+            sample["pos"],
+            sample["depth_local"],
+            sample["waypoint_global"],
+            sample["velocity_global"],
+            sample["heading"],
+            sample["angular_velocity"],
         )
 
         if max(depth_local) > 1e3:
-            print('depth:', depth_local)
-            raise ValueError('invalid depth')
+            print("depth:", depth_local)
+            raise ValueError("invalid depth")
 
         if self.random_vel:
             velocity_global = _randomize_velocity(self.rng, velocity_global)
             angular_velocity = _randomize_angular_velocity(self.rng, angular_velocity)
 
-        obstacles_local = np.array(depth_to_xy(depth_local,
-                                               fov=self.agent.lidar_sensor.fov), np.float32)
+        obstacles_local = np.array(
+            depth_to_xy(depth_local, fov=self.agent.lidar_sensor.fov), np.float32
+        )
 
         self.agent.pos = pos
         self.agent.velocity = velocity_global
@@ -264,13 +292,15 @@ class DatasetVisual(data.Dataset):
         dataset_idx, traj_id, sample_idx = self._locate_sample(idx)
 
         sample = self.fds[dataset_idx][traj_id][sample_idx]
-        map_name = self.fds[dataset_idx][traj_id].attrs['map'].decode('ascii')
-        final_goal_global = self.fds[dataset_idx][traj_id][-1]['waypoint_global']
+        map_name = self.fds[dataset_idx][traj_id].attrs["map"].decode("ascii")
+        final_goal_global = self.fds[dataset_idx][traj_id][-1]["waypoint_global"]
 
         return self._make(
-            map_name, sample,
+            map_name,
+            sample,
             final_goal_global=final_goal_global,
-            attrs=self.fds[dataset_idx][traj_id].attrs)
+            attrs=self.fds[dataset_idx][traj_id].attrs,
+        )
 
     def _discretize_waypoint(self, waypoint, n_discretization):
         def _normalize_angle(a):
@@ -289,10 +319,9 @@ class DatasetVisual(data.Dataset):
         if not self.opened:
             driver = None
             if self.load_to_mem:
-                driver = 'core'
-                print('loading dataset into memory... it may take a while')
-            self.fds = [h5py.File(fn, 'r', driver=driver)
-                        for fn in self.hd5_files]
+                driver = "core"
+                print("loading dataset into memory... it may take a while")
+            self.fds = [h5py.File(fn, "r", driver=driver) for fn in self.hd5_files]
             self.opened = True
 
     def _init_once(self, seed):
@@ -321,8 +350,8 @@ class DatasetVisual(data.Dataset):
             agent = self.agent
         laserscans = []
         for sample in traj:
-            agent.set_pos(sample['pos'])
-            agent.set_heading(sample['heading'])
+            agent.set_pos(sample["pos"])
+            agent.set_heading(sample["heading"])
             agent._measure()
             laserscans.append(agent.depth_local)
         return laserscans
@@ -336,7 +365,7 @@ class DatasetVisual(data.Dataset):
         self._init_once(idx)
 
         if _LOG_EMIT_SAMPLE_TIME:
-            if not hasattr(self, 'accum_emit_sample_time'):
+            if not hasattr(self, "accum_emit_sample_time"):
                 self.accum_emit_sample_time = 0.0
                 self.emit_sample_count = 0
 
@@ -346,7 +375,7 @@ class DatasetVisual(data.Dataset):
             self.emit_sample_count += 1
 
             if self.emit_sample_count % 100 == 0:
-                print('avg emit sample time:', self.accum_emit_sample_time / 100)
+                print("avg emit sample time:", self.accum_emit_sample_time / 100)
                 self.accum_emit_sample_time = 0
         else:
             item = self._emit_sample(idx)
@@ -362,14 +391,20 @@ class DatasetVisual(data.Dataset):
 
 
 class DatasetVisualGibson(DatasetVisual):
-    def __init__(self,
-                 assets_dir,
-                 render_resolution=256,
-                 camera_pos=(0.0, 0.0), camera_z=1.0, h_fov=None, v_fov=None,
-                 gpu_device=None,
-                 n_filler_server=0, n_sim_per_map=0,
-                 persistent_server_cfg_file=None,
-                 **kwargs):
+    def __init__(
+        self,
+        assets_dir,
+        render_resolution=256,
+        camera_pos=(0.0, 0.0),
+        camera_z=1.0,
+        h_fov=None,
+        v_fov=None,
+        gpu_device=None,
+        n_filler_server=0,
+        n_sim_per_map=0,
+        persistent_server_cfg_file=None,
+        **kwargs
+    ):
         """
         :param gpu_device: can be either an integer or a list of integers
         :param render_resolution: the resolution of rendered images from Gibson
@@ -381,6 +416,8 @@ class DatasetVisualGibson(DatasetVisual):
         :param n_sim_per_map: number of simulation servers for each map
         :param persistent_server_cfg_file: a yaml file containing configuration of persistent servers.
         """
+
+        self.is_worker = False
         if not os.path.isdir(assets_dir):
             raise RuntimeError("directory %s doesn't exist" % assets_dir)
         self.assets_dir = assets_dir
@@ -394,7 +431,7 @@ class DatasetVisualGibson(DatasetVisual):
         self.camera_pos = np.array(camera_pos, np.float32)
         self.camera_z = camera_z
 
-        if hasattr(gpu_device, '__iter__'):
+        if hasattr(gpu_device, "__iter__"):
             self.gpus = list(gpu_device)
         elif gpu_device is not None:
             self.gpus = [gpu_device]
@@ -409,22 +446,25 @@ class DatasetVisualGibson(DatasetVisual):
         self.persistent_server_cfg_file = persistent_server_cfg_file
         self.persistent_servers = {}
         if persistent_server_cfg_file is not None:
-            self.persistent_servers = self._parse_persistent_server(persistent_server_cfg_file)
+            self.persistent_servers = self._parse_persistent_server(
+                persistent_server_cfg_file
+            )
 
-        self.g.update({
-            'n_filler_server': n_filler_server,
-            'n_sim_per_map': n_sim_per_map,
-            'render_resolution': self.render_resolution,
-            'persistent_servers': self.persistent_servers
-        })
+        self.g.update(
+            {
+                "n_filler_server": n_filler_server,
+                "n_sim_per_map": n_sim_per_map,
+                "render_resolution": self.render_resolution,
+                "persistent_servers": self.persistent_servers,
+            }
+        )
 
         self.n_filler_server = n_filler_server
         self.filler_servers = []  # Tuples of (process, server_addr)
 
-        self.is_worker = False
         self.start_renderer_servers()
 
-    def render_traj(self, traj, map_name='unspecified'):
+    def render_traj(self, traj, map_name="unspecified"):
         imgs = []
         for sample in traj:
             self._set_agent_state(sample)
@@ -444,11 +484,14 @@ class DatasetVisualGibson(DatasetVisual):
             h_fov, v_fov = self.h_fov, self.v_fov
 
         for i in xrange(self.n_filler_server):
-            self.filler_servers.append(gibson_filler_server.LaunchServer(
-                self.render_resolution,
-                self.gpus[i % len(self.gpus)],
-                use_ipc=True,
-                ipc_endpoint='/tmp/filler_server.%f' % time.time()))
+            self.filler_servers.append(
+                gibson_filler_server.LaunchServer(
+                    self.render_resolution,
+                    self.gpus[i % len(self.gpus)],
+                    use_ipc=True,
+                    ipc_endpoint="/tmp/filler_server.%f" % time.time(),
+                )
+            )
 
         idx = 0
         self.sim_servers = {}
@@ -464,11 +507,14 @@ class DatasetVisualGibson(DatasetVisual):
                 filler_server_addr = self.filler_servers[idx % self.n_filler_server][1]
 
                 sim_proc, addr = gibson_sim_client.LaunchServer(
-                    self.assets_dir, map_name,
+                    self.assets_dir,
+                    map_name,
                     self.render_resolution,
-                    h_fov, v_fov,
+                    h_fov,
+                    v_fov,
                     gpu=self.gpus[idx % len(self.gpus)],
-                    filler_server_addr=filler_server_addr)
+                    filler_server_addr=filler_server_addr,
+                )
 
                 self.sim_servers[map_name].append((sim_proc, addr))
                 idx += 1
@@ -482,17 +528,18 @@ class DatasetVisualGibson(DatasetVisual):
                 self.sim_servers[map_name] = []
             for addr in addrs:
                 self.sim_servers[map_name].append((None, addr))
-        print('started renderer servers:\n%s' % pprint_dict(self.sim_servers))
+        print("started renderer servers:\n%s" % pprint_dict(self.sim_servers))
 
     def stop_renderer_servers(self):
         import zmq
+
         context = zmq.Context()
         socket = context.socket(zmq.REQ)
 
         def stop(proc, addr):
             try:
                 socket.connect(addr)
-                socket.send_pyobj(['exit'])
+                socket.send_pyobj(["exit"])
                 socket.recv_pyobj()  # send and recv must be paired
                 proc.communicate()
                 socket.disconnect(addr)
@@ -504,12 +551,12 @@ class DatasetVisualGibson(DatasetVisual):
                 if proc is not None:
                     # proc can be None if the server is persistent. In that case we don't kill it.
                     stop(proc, addr)
-            print('renderer server for map %s stopped' % name)
+            print("renderer server for map %s stopped" % name)
 
         for idx, (proc, addr) in enumerate(self.filler_servers):
-            print('stopping filler server %s' % addr)
+            print("stopping filler server %s" % addr)
             stop(proc, addr)
-            print('filler server %s stopped' % addr)
+            print("filler server %s stopped" % addr)
         self.filler_servers = []
 
         socket.close()
@@ -517,14 +564,17 @@ class DatasetVisualGibson(DatasetVisual):
 
     def _start_renderer_clients(self):
         for map_name, servers in iteritems(self.sim_servers):
-            if map_name == 'all':
+            if map_name == "all":
                 # This server can handle all maps. We need to set client's  to make sure
                 # requests are correctly routed.
                 for sim_proc, addr in servers:
                     for identity in self.map_names:
                         client = GibsonSimClient()
-                        client.start(create_server=False, server_addr=addr,
-                                     identity=identity.encode())
+                        client.start(
+                            create_server=False,
+                            server_addr=addr,
+                            identity=identity.encode(),
+                        )
 
                         if identity not in self.sim_clients:
                             self.sim_clients[identity] = []
@@ -539,7 +589,7 @@ class DatasetVisualGibson(DatasetVisual):
                     client.start(create_server=False, server_addr=addr)
                     self.sim_clients[map_name].append(client)
 
-        print('started renderer clients:\n%s' % pprint_dict(self.sim_clients))
+        print("started renderer clients:\n%s" % pprint_dict(self.sim_clients))
 
     def _stop_renderer_clients(self):
         for map_name, clients in iteritems(self.sim_clients):
@@ -560,10 +610,11 @@ class DatasetVisualGibson(DatasetVisual):
             # Send state information in multiple calls may cause them to be distributed to into multiple
             # servers, which causes inconsistency.
             return sim.RenderAndGetScreenBuffer(
-                cam_pos[0], cam_pos[1], self.agent.heading, -1, self.camera_z)
+                cam_pos[0], cam_pos[1], self.agent.heading, -1, self.camera_z
+            )
 
         if _LOG_RENDER_TIME:
-            if not hasattr(self, 'accum_render_time'):
+            if not hasattr(self, "accum_render_time"):
                 self.accum_render_time = 0
                 self.render_count = 0
 
@@ -573,15 +624,17 @@ class DatasetVisualGibson(DatasetVisual):
             self.render_count += 1
 
             if self.render_count % 100 == 0:
-                print('avg render_time', self.accum_render_time / 100)
+                print("avg render_time", self.accum_render_time / 100)
                 self.accum_render_time = 0
         else:
             img = _render()
 
         # img is H x W x 3 uint8
-        img = cv2.resize(img,
-                         (self.net_config.input_resolution, self.net_config.input_resolution),
-                         cv2.INTER_AREA)
+        img = cv2.resize(
+            img,
+            (self.net_config.input_resolution, self.net_config.input_resolution),
+            cv2.INTER_AREA,
+        )
         img = img.astype(np.float32) / 255.0
         img = np.transpose(img, (2, 0, 1))
 
@@ -591,32 +644,36 @@ class DatasetVisualGibson(DatasetVisual):
         return img
 
     def _worker_init(self):
-        print('worker_init pid', os.getpid())
+        print("worker_init pid", os.getpid())
         self.is_worker = True
         self._start_renderer_clients()
 
     def __del__(self):
         if not self.is_worker:
             # This should be only called by the dataset object in the main thread.
-            print('stopping render servers (pid %d)' % os.getpid())
+            print("stopping render servers (pid %d)" % os.getpid())
             self.stop_renderer_servers()
         else:
             # This is mostly likely never called because worker process gets terminated
             # directly without cleanup.
-            print('stopping render clients (pid %d)' % os.getpid())
+            print("stopping render clients (pid %d)" % os.getpid())
             self._stop_renderer_clients()
 
 
 class DatasetVisualRecording(data.Dataset):
-    def __init__(self, data_dir, agent_name,
-                 ignore_goal=False,
-                 random_goal=False,
-                 no_waypoint=False,
-                 random_vel=False,
-                 random_lighting=False,
-                 net_config=None,
-                 load_to_mem=False,
-                 max_traj=-1):
+    def __init__(
+        self,
+        data_dir,
+        agent_name,
+        ignore_goal=False,
+        random_goal=False,
+        no_waypoint=False,
+        random_vel=False,
+        random_lighting=False,
+        net_config=None,
+        load_to_mem=False,
+        max_traj=-1,
+    ):
         import glob
 
         self.data_dir = data_dir
@@ -637,12 +694,12 @@ class DatasetVisualRecording(data.Dataset):
 
         for d in dirs:
             if os.path.isdir(os.path.join(data_dir, d)):
-                img_files = glob.glob(os.path.join(data_dir, d, '*.tiff'))
+                img_files = glob.glob(os.path.join(data_dir, d, "*.tiff"))
                 for fn in img_files:
                     basename = os.path.splitext(os.path.basename(fn))[0]
-                    meta_file = os.path.join(data_dir, d, '%s.txt' % basename)
+                    meta_file = os.path.join(data_dir, d, "%s.txt" % basename)
                     meta_txt = open(meta_file).read()
-                    kvs = [l.split(':') for l in meta_txt.split('\n')]
+                    kvs = [l.split(":") for l in meta_txt.split("\n")]
                     meta = dict()
                     for kv in kvs:
                         if len(kv) == 2:
@@ -650,7 +707,7 @@ class DatasetVisualRecording(data.Dataset):
                     samples.append((fn, meta))
 
         self.samples = samples
-        print('number of samples: ', len(samples))
+        print("number of samples: ", len(samples))
 
         self.sample_weights = [1.0 for _ in xrange(len(samples))]
 
@@ -665,12 +722,12 @@ class DatasetVisualRecording(data.Dataset):
 
     def _set_agent_state(self, meta):
         pos, heading, velocity_global, angular_velocity, goal_local, obstacles_local = (
-            np.array(meta['pos'], np.float32),
-            meta['heading'],
-            np.array(meta['velocity'], np.float32),
-            meta['angular_velocity'],
-            np.array(meta['goal_local'], np.float32),
-            np.array(meta['obstacles_local'], np.float32),
+            np.array(meta["pos"], np.float32),
+            meta["heading"],
+            np.array(meta["velocity"], np.float32),
+            meta["angular_velocity"],
+            np.array(meta["goal_local"], np.float32),
+            np.array(meta["obstacles_local"], np.float32),
         )
 
         if self.random_vel:

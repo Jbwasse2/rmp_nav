@@ -1,5 +1,6 @@
 model: model_12env_v2_future_pair_proximity_z0228
-
+map: an_hallway
+data_dir: "/home/justin/data/topological/custom"
 graph_kwargs:
   sparsify_thres: 0.99
   edge_add_thres: 0.99

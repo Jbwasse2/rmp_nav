@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pudb
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from tqdm import tqdm
 
 from rmp_nav.common.image_combiner import HStack, VStack
 from rmp_nav.common.math_utils import rotate_2d
@@ -679,17 +680,79 @@ if __name__ == "__main__":
             print("Unknown task: %s" % FLAGS.task)
             exit(0)
 
-    def get_wp():
+    def get_wp(model, ob, goal):
+        agent = agent_factory.agents_dict[model["agent"]]()
+        follower = model["follower"]
+        return follower.motion_policy.predict_waypoint(ob, goal)
+
+    def get_video_trajectory():
+        # cap = cv2.VideoCapture("20200709_125258.mp4")
+        #        cap = cv2.VideoCapture("20200709_142115.mp4")
+        # cap = cv2.VideoCapture("20200710_093518.mp4")
+        cap = cv2.VideoCapture("20200710_145453.mp4")
+        # Check if camera opened successfully
+        if cap.isOpened() == False:
+            IOError("Error opening video stream or file")
+
+        # Read until video is completed
+        trajectory = []
+        while cap.isOpened():
+            # Capture frame-by-frame
+            ret, frame = cap.read()
+
+            if ret == True:
+                # Display the resulting frame
+                frame = cv2.resize(frame, dsize=(64, 64), interpolation=cv2.INTER_CUBIC)
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                trajectory.append(frame)
+            else:
+                break
+        # When everything done, release the video capture object
+        cap.release()
+        # Closes all the frames
+        return np.asarray(trajectory)
+
+    def show_img(img):
+        matplotlib.use("TkAgg")
+        img = np.swapaxes(img, 0, 2)
+        img = np.swapaxes(img, 1, 0)
+        plt.imshow(img)
+        plt.show()
+        matplotlib.use("Agg")
+
+    def create_visual_wp_video():
+        trajectory = get_video_trajectory()
+        goal = trajectory[-11:, :, :, :]
+        #        goal = trajectory[250:261, :, :, :]
+        goal = [
+            cv2.resize(
+                cv2.cvtColor(cv2.imread("20200710_145603.jpg"), cv2.COLOR_BGR2RGB),
+                dsize=(64, 64),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            for i in range(11)
+        ]
+        goal = np.swapaxes(goal, 1, 3)
+        goal = np.swapaxes(goal, 2, 3)
+
+        goal = np.asarray(goal)
         pu.db
         model = model_factory.get(FLAGS.model)(
             device=FLAGS.device, **str_to_dict(FLAGS.model_param)
         )
-        print("model:\n%s" % pprint_dict(model))
-        agent = agent_factory.agents_dict[model["agent"]]()
-        follower = model["follower"]
-        a = np.random.rand(11, 3, 64, 64)
-        ob = np.random.rand(3, 64, 64)
-        res = follower.motion_policy.predict_waypoint(ob, a)
+        wps = []
+        for frame in tqdm(range(trajectory.shape[0])):
+            #            goal_frame = min(frame + 50, trajectory.shape[0] - 11)
+            #            goal = trajectory[goal_frame - 5 : goal_frame + 6, :, :, :]
+            #            goal = np.swapaxes(goal, 1, 3)
+            #            goal = np.swapaxes(goal, 2, 3)
+            ob = trajectory[frame, :, :, :]
+            ob = np.swapaxes(ob, 0, 2)
+            ob = np.swapaxes(ob, 1, 2)
+            wp = get_wp(model, ob, goal)
+            wps.append(wp)
+        wps = np.asarray(wps)
+        np.save("./points.npy", wps)
 
-    #    get_wp()
-    frontend()
+    create_visual_wp_video()
+    # frontend()

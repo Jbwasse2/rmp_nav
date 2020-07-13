@@ -1,16 +1,19 @@
 from __future__ import print_function
-from past.builtins import xrange
+
+from copy import deepcopy
+
+import cv2
 import numpy as np
 from numpy.linalg import norm
-import cv2
-from copy import deepcopy
-from . import agent_utils, sensors
-from ..common.math_utils import rotate_2d, depth_to_xy
+from past.builtins import xrange
+
+from ..common.math_utils import depth_to_xy, rotate_2d
 from ..common.utils import pprint_dict
+from . import agent_utils, sensors
 
 
 class Agent(object):
-    def __init__(self, name=''):
+    def __init__(self, name=""):
         """
         :param name: the name of the agent
         """
@@ -22,16 +25,14 @@ class Agent(object):
         self.step_count = 0
 
     def save_state(self):
-        return deepcopy({
-            'pos': self.pos,
-            'heading': self.heading,
-            'velocity': self.velocity,
-        })
+        return deepcopy(
+            {"pos": self.pos, "heading": self.heading, "velocity": self.velocity,}
+        )
 
     def restore_state(self, state):
-        self.pos = deepcopy(state['pos'])
-        self.heading = deepcopy(state['heading'])
-        self.velocity = deepcopy(state['velocity'])
+        self.pos = deepcopy(state["pos"])
+        self.heading = deepcopy(state["heading"])
+        self.velocity = deepcopy(state["velocity"])
 
     def set_pos(self, pos):
         self.pos = np.array(pos, copy=True)
@@ -46,20 +47,21 @@ class Agent(object):
         self.velocity = np.array(pos, copy=True)
 
     def collide(self):
-        '''
+        """
         :return: True if the agent collides with walls
-        '''
+        """
         return NotImplementedError
 
-    def next_visible_waypoint(self, waypoints, cur_wp_idx, dist_thres,
-                              pos=None, max_ahead=10, max_dist=None):
-        '''
+    def next_visible_waypoint(
+        self, waypoints, cur_wp_idx, dist_thres, pos=None, max_ahead=10, max_dist=None
+    ):
+        """
         Find the next visible waypoint starting from @param cur_wp_idx. If none is visible,
         backtrack a closest point. If still none is visible, return @param cur_wp_idx.
         :param dist_thres: threshold of waypoint-obstacle distance when testing visibility.
         :param max_ahead: consider waypoint indices up to this value away.
                           This is to avoid selecting waypoint visible from a window.
-        '''
+        """
         if pos is None:
             pos = self.pos
 
@@ -82,7 +84,7 @@ class Agent(object):
                     break
 
         if next_visible_wp is None:
-            print('warning: no visible waypoint. using current')
+            print("warning: no visible waypoint. using current")
             next_visible_wp = cur_wp_idx
         return next_visible_wp
 
@@ -93,29 +95,33 @@ class Agent(object):
         self.step_count = 0
 
     def stopped(self):
-        '''
+        """
         :return: True if the agent has stopped (means either it reaches the goal or gets stuck)
-        '''
+        """
         raise NotImplementedError
 
     def step(self, step_size, **kwargs):
-        '''
+        """
         Make one step of simulation.
         :param step_size: time step size.
-        '''
+        """
         self.step_count += 1
 
 
 class AgentLocal(Agent):
-    def __init__(self, control_points, solver,
-                 state_history_len=100,
-                 goal_clip_fov=None,  # TODO: change 'goal' to 'waypoint'?
-                 max_waypoint_ahead=100,
-                 max_waypoint_dist=None,
-                 waypoint_visibility_thres=0.06,
-                 waypoint_normalize_dist=None,
-                 **kwargs):
-        '''
+    def __init__(
+        self,
+        control_points,
+        solver,
+        state_history_len=100,
+        goal_clip_fov=None,  # TODO: change 'goal' to 'waypoint'?
+        max_waypoint_ahead=100,
+        max_waypoint_dist=None,
+        waypoint_visibility_thres=0.06,
+        waypoint_normalize_dist=None,
+        **kwargs
+    ):
+        """
         A general agent that uses local sensor measurements. The obstacles and waypoints
         are w.r.t. the local coordinate system. Note that internally it still has a global
         representation but it is only for convenience, and should not be directly used for making
@@ -127,7 +133,7 @@ class AgentLocal(Agent):
         :param max_waypoint_ahead: upper limit of the distance (in waypoint count)
                                    to the next waypoint.
         :param max_waypoint_dist: upper limit of the metric distance to the next waypoint.
-        '''
+        """
 
         super(AgentLocal, self).__init__(**kwargs)
         self.control_points = np.array(control_points, copy=True)
@@ -156,52 +162,55 @@ class AgentLocal(Agent):
         self.waypoint_normalize_dist = waypoint_normalize_dist
 
         self.g = {
-            'goal_clip_fov': self.goal_clip_fov,
-            'max_waypoint_ahead': self.max_waypoint_ahead,
-            'max_waypoint_dist': self.max_waypoint_dist,
-            'waypoint_visibility_thres': self.waypoint_visibility_thres,
-            'waypoint_normalize_dist': self.waypoint_normalize_dist
+            "goal_clip_fov": self.goal_clip_fov,
+            "max_waypoint_ahead": self.max_waypoint_ahead,
+            "max_waypoint_dist": self.max_waypoint_dist,
+            "waypoint_visibility_thres": self.waypoint_visibility_thres,
+            "waypoint_normalize_dist": self.waypoint_normalize_dist,
         }
 
         self.control_point_accels = None
         self.control_point_metrics = None
 
         from collections import deque
+
         self.state_history = deque([], maxlen=state_history_len)
 
         self.reset()
 
     def __repr__(self):
-        return '%s options\n%s' % (self.__class__.__name__, pprint_dict(self.g))
+        return "%s options\n%s" % (self.__class__.__name__, pprint_dict(self.g))
 
     def save_state(self):
         state1 = super(AgentLocal, self).save_state()
-        state2 = deepcopy({
-            'angular_velocity': self.angular_velocity,
-            'waypoints': self.waypoints,  # waypoints may change at every step if replan is enabled
-            'wp_idx': self.wp_idx,
-            'accel': self.accel,
-            'obstacles_local': self.obstacles_local,
-            'obstacles_global': self.obstacles_global,
-            'goals_local': self.goals_local,
-            'goals_global': self.goals_global,
-            'control_point_accels': self.control_point_accels,
-            'control_point_metrics': self.control_point_metrics
-        })
+        state2 = deepcopy(
+            {
+                "angular_velocity": self.angular_velocity,
+                "waypoints": self.waypoints,  # waypoints may change at every step if replan is enabled
+                "wp_idx": self.wp_idx,
+                "accel": self.accel,
+                "obstacles_local": self.obstacles_local,
+                "obstacles_global": self.obstacles_global,
+                "goals_local": self.goals_local,
+                "goals_global": self.goals_global,
+                "control_point_accels": self.control_point_accels,
+                "control_point_metrics": self.control_point_metrics,
+            }
+        )
         state1.update(state2)
         return state1
 
     def restore_state(self, state):
-        self.angular_velocity = deepcopy(state['angular_velocity'])
-        self.waypoints = deepcopy(state['waypoints'])
-        self.wp_idx = deepcopy(state['wp_idx'])
-        self.accel = deepcopy(state['accel'])
-        self.obstacles_local = deepcopy(state['obstacles_local'])
-        self.obstacles_global = deepcopy(state['obstacles_global'])
-        self.goals_local = deepcopy(state['goals_local'])
-        self.goals_global = deepcopy(state['goals_global'])
-        self.control_point_accels = deepcopy(state['control_point_accels'])
-        self.control_point_metrics = deepcopy(state['control_point_metrics'])
+        self.angular_velocity = deepcopy(state["angular_velocity"])
+        self.waypoints = deepcopy(state["waypoints"])
+        self.wp_idx = deepcopy(state["wp_idx"])
+        self.accel = deepcopy(state["accel"])
+        self.obstacles_local = deepcopy(state["obstacles_local"])
+        self.obstacles_global = deepcopy(state["obstacles_global"])
+        self.goals_local = deepcopy(state["goals_local"])
+        self.goals_global = deepcopy(state["goals_global"])
+        self.control_point_accels = deepcopy(state["control_point_accels"])
+        self.control_point_metrics = deepcopy(state["control_point_metrics"])
         super(AgentLocal, self).restore_state(state)
 
     def reset(self):
@@ -232,22 +241,22 @@ class AgentLocal(Agent):
         return rotate_2d(self.velocity, -self.heading)
 
     def get_local_jacobian(self, p):
-        '''
+        """
         :return: the jacobian of point (x, y) in the local coordinate system
-        '''
+        """
         return np.array([[1, 0, -p[1]], [0, 1, p[0]]], np.float32)
 
     def get_control_point_jacobians(self):
-        '''
+        """
         :return: the jacobians of control points w.r.t. the local coordinate system.
-        '''
+        """
         return [self.get_local_jacobian(p) for p in self.control_points]
 
     def global_to_local(self, p):
-        '''
+        """
         :param p: the point w.r.t the global coordinate system
         :return: the same point w.r.t. the local coordinate system
-        '''
+        """
         return rotate_2d(p - self.pos, -self.heading)
 
     def local_to_global(self, p):
@@ -264,10 +273,10 @@ class AgentLocal(Agent):
         return self.angular_velocity * np.array([-p[1], p[0]], np.float32)
 
     def local_velocity(self, p):
-        '''
+        """
         :param p: x, y
         :return: the velocity of p w.r.t the local coordinate system
-        '''
+        """
         v_tangent = self.local_tangent_velocity(p)
         v_linear = rotate_2d(self.velocity, -self.heading)
         return v_linear + v_tangent
@@ -278,10 +287,12 @@ class AgentLocal(Agent):
     def _compute_next_waypoint(self):
         if self.waypoints is not None and len(self.waypoints) > 0:
             next_wp = self.next_visible_waypoint(
-                self.waypoints, self.wp_idx,
+                self.waypoints,
+                self.wp_idx,
                 self.waypoint_visibility_thres,
                 max_ahead=self.max_waypoint_ahead,
-                max_dist=self.max_waypoint_dist)
+                max_dist=self.max_waypoint_dist,
+            )
             return next_wp
         else:
             return None
@@ -293,7 +304,11 @@ class AgentLocal(Agent):
             goal_local = agent_utils.clip_within_fov(goal_local, self.goal_clip_fov)
 
         if self.waypoint_normalize_dist is not None:
-            goal_local = goal_local / np.linalg.norm(goal_local, ord=2) * self.waypoint_normalize_dist
+            goal_local = (
+                goal_local
+                / np.linalg.norm(goal_local, ord=2)
+                * self.waypoint_normalize_dist
+            )
 
         return goal_local
 
@@ -337,10 +352,10 @@ class AgentLocal(Agent):
         """
         super(AgentLocal, self).step(step_size)
 
-        if kwargs.get('measure', True):
+        if kwargs.get("measure", True):
             self._measure()
 
-        wp = kwargs.get('waypoint', None)
+        wp = kwargs.get("waypoint", None)
         if wp is not None:
             self.goals_local = [wp]
             self.goals_global = [self.local_to_global(wp)]
@@ -349,22 +364,23 @@ class AgentLocal(Agent):
 
         accel_local = self.solver.compute_accel_local(self)
 
-        if hasattr(self.solver, 'get_control_point_accels'):
+        if hasattr(self.solver, "get_control_point_accels"):
             self.control_point_accels = self.solver.get_control_point_accels()
 
-        if hasattr(self.solver, 'get_control_point_metrics'):
+        if hasattr(self.solver, "get_control_point_metrics"):
             self.control_point_metrics = self.solver.get_control_point_metrics()
 
-        self._apply_accel(accel_local, step_size, max_vel=kwargs.get('max_vel', None))
+        self._apply_accel(accel_local, step_size, max_vel=kwargs.get("max_vel", None))
 
         self.state_history.append(
-            (np.array(self.velocity, copy=True), np.array(self.accel, copy=True)))
+            (np.array(self.velocity, copy=True), np.array(self.accel, copy=True))
+        )
 
     def approx_radius(self):
-        '''
+        """
         :return: the max distance of each control point to the center of the agent.
                  When the agent is ciruclarly symmetric, it is the same as its radius.
-        '''
+        """
         return max(np.linalg.norm(self.control_points, 2, axis=1))
 
     def reached_goal(self, relax=1.5):
@@ -389,7 +405,9 @@ class AgentLocal(Agent):
 
 
 class AgentLocalLIDAR(AgentLocal):
-    def __init__(self, n_depth_ray, lidar_sensor_pos=(0.0, 0.0), lidar_fov=np.pi*2.0, **kwargs):
+    def __init__(
+        self, n_depth_ray, lidar_sensor_pos=(0.0, 0.0), lidar_fov=np.pi * 2.0, **kwargs
+    ):
         super(AgentLocalLIDAR, self).__init__(**kwargs)
         self.lidar_sensor = sensors.Lidar(n_depth_ray, lidar_fov)
         self.sensors.append(self.lidar_sensor)
@@ -406,24 +424,37 @@ class AgentLocalLIDAR(AgentLocal):
         super(AgentLocalLIDAR, self)._measure()
 
         depth_local = self.lidar_sensor.measure(
-            self.local_to_global(self.lidar_sensor_pos), self.heading)
+            self.local_to_global(self.lidar_sensor_pos), self.heading
+        )
 
         self.depth_local = depth_local
 
         assert np.max(self.depth_local) < 1e3
 
-        obstacles_local = depth_to_xy(depth_local, fov=self.lidar_sensor.fov) + self.lidar_sensor_pos
+        obstacles_local = (
+            depth_to_xy(depth_local, fov=self.lidar_sensor.fov) + self.lidar_sensor_pos
+        )
 
         self.obstacles_local = obstacles_local
         self.obstacles_global = self.local_to_global(obstacles_local)
 
 
 class AgentLocalVisual2LIDAR_Gibson(AgentLocal):
-    '''
+    """
     Use image to predict LIDAR rays, which is then used as input of the configs solver.
-    '''
-    def __init__(self, n_depth_ray, gpu_idx=0, lidar_fov=np.pi*2.0, h_fov=None, v_fov=None,
-                 camera_pos=(0.0, 0.0), camera_z=1.0, **kwargs):
+    """
+
+    def __init__(
+        self,
+        n_depth_ray,
+        gpu_idx=0,
+        lidar_fov=np.pi * 2.0,
+        h_fov=None,
+        v_fov=None,
+        camera_pos=(0.0, 0.0),
+        camera_z=1.0,
+        **kwargs
+    ):
         """
         :param lidar_fov: lidar's fov
         :param h_fov: camera's horizontal fov
@@ -449,18 +480,16 @@ class AgentLocalVisual2LIDAR_Gibson(AgentLocal):
 
     def save_state(self):
         state1 = super(AgentLocalVisual2LIDAR_Gibson, self).save_state()
-        state2 = deepcopy({
-            'img': self.img,
-            'depth': self.depth,
-            'depth_local': self.depth_local,
-        })
+        state2 = deepcopy(
+            {"img": self.img, "depth": self.depth, "depth_local": self.depth_local,}
+        )
         state1.update(state2)
         return state1
 
     def restore_state(self, state):
-        self.img = deepcopy(state['img'])
-        self.depth = deepcopy(state['depth'])
-        self.depth_local = deepcopy(state['depth_local'])
+        self.img = deepcopy(state["img"])
+        self.depth = deepcopy(state["depth"])
+        self.depth_local = deepcopy(state["depth_local"])
         super(AgentLocalVisual2LIDAR_Gibson, self).restore_state(state)
 
     def reset(self):
@@ -484,20 +513,25 @@ class AgentLocalVisual2LIDAR_Gibson(AgentLocal):
         if map is None:
             return
 
-        print('start gibson sim client, scene id', self.map.scene_id)
+        print("start gibson sim client, scene id", self.map.scene_id)
 
         self.sim_client = GibsonSimClient()
         self.sim_client.start(
-            assets_dir=self.map.assets_dir, scene_id=self.map.scene_id,
-            h_fov=self.h_fov, v_fov=self.v_fov, gpu=self.gpu_idx, create_server=True)
+            assets_dir=self.map.assets_dir,
+            scene_id=self.map.scene_id,
+            h_fov=self.h_fov,
+            v_fov=self.v_fov,
+            gpu=self.gpu_idx,
+            create_server=True,
+        )
 
     def get_camera_global_pos(self):
         return self.local_to_global(self.camera_pos)
 
     def _convert_img(self, img):
-        '''
+        """
         Convert the doom simulator screenbuffer (H x W x 3, uint8) to network input (3 x H x W, float32)
-        '''
+        """
         img = cv2.resize(img, (224, 224), cv2.INTER_AREA)
         img = img.astype(np.float32) / 255.0
         img = np.transpose(img, (2, 0, 1))
@@ -509,18 +543,25 @@ class AgentLocalVisual2LIDAR_Gibson(AgentLocal):
 
         cam_pos = self.get_camera_global_pos()
         img = sim_proc.RenderAndGetScreenBuffer(
-            cam_pos[0], cam_pos[1], self.heading, None)
+            cam_pos[0], cam_pos[1], self.heading, None
+        )
 
         self.img = self._convert_img(img)
 
 
 class AgentLocalVisualGibson(AgentLocal):
-    def __init__(self, gpu_idx=0, h_fov=None, v_fov=None,
-                 render_resolution=256,
-                 output_resolution=224,
-                 camera_pos=(0.0, 0.0), camera_z=1.0,
-                 persistent_servers=None,
-                 **kwargs):
+    def __init__(
+        self,
+        gpu_idx=0,
+        h_fov=None,
+        v_fov=None,
+        render_resolution=256,
+        output_resolution=224,
+        camera_pos=(0.0, 0.0),
+        camera_z=1.0,
+        persistent_servers=None,
+        **kwargs
+    ):
         """
         :param fov, h_fov, v_fov: If h_fov or v_fov is None, then assume both h_fov and v_fov are
                fov. Otherwise fov is not used.
@@ -528,7 +569,13 @@ class AgentLocalVisualGibson(AgentLocal):
         super(AgentLocalVisualGibson, self).__init__(**kwargs)
 
         self.gibson_camera = sensors.GibsonCamera(
-            gpu_idx, render_resolution, output_resolution, h_fov, v_fov, persistent_servers)
+            gpu_idx,
+            render_resolution,
+            output_resolution,
+            h_fov,
+            v_fov,
+            persistent_servers,
+        )
         self.sensors.append(self.gibson_camera)
 
         self.img = None
@@ -537,14 +584,12 @@ class AgentLocalVisualGibson(AgentLocal):
 
     def save_state(self):
         state1 = super(AgentLocalVisualGibson, self).save_state()
-        state2 = deepcopy({
-            'img': self.img,
-        })
+        state2 = deepcopy({"img": self.img,})
         state1.update(state2)
         return state1
 
     def restore_state(self, state):
-        self.img = deepcopy(state['img'])
+        self.img = deepcopy(state["img"])
         super(AgentLocalVisualGibson, self).restore_state(state)
 
     def reset(self):
@@ -557,13 +602,15 @@ class AgentLocalVisualGibson(AgentLocal):
     def _measure(self):
         super(AgentLocalVisualGibson, self)._measure()
         cam_pos = self.get_camera_global_pos()
-        self.img = self.gibson_camera.measure((cam_pos[0], cam_pos[1], self.camera_z), self.heading)
+        self.img = self.gibson_camera.measure(
+            (cam_pos[0], cam_pos[1], self.camera_z), self.heading
+        )
 
     def step(self, step_size, **kwargs):
-        img = kwargs.pop('img', None)
+        img = kwargs.pop("img", None)
         if img is not None:
             self.img = img
-            kwargs['measure'] = False
+            kwargs["measure"] = False
         super(AgentLocalVisualGibson, self).step(step_size, **kwargs)
 
 
@@ -571,6 +618,7 @@ class AgentLocalVisualGibsonWaypoint(AgentLocalVisualGibson):
     """
     This agent uses visual images to predict a waypoint for destination-conditioned navigation.
     """
+
     def __init__(self, waypoint_solver, **kwargs):
         self.waypoint_solver = waypoint_solver
         self.destination = None
@@ -595,6 +643,7 @@ class AgentLocalVisualGibsonWaypointRef(AgentLocalVisualGibson):
     It stores a neural waypoint using waypoint solver for comparison.
     For debugging only.
     """
+
     def __init__(self, waypoint_solver, **kwargs):
         self.destination = None
         self.neural_waypoint = None
@@ -631,6 +680,7 @@ class AgentLocalVisualGibsonWaypointDagger(AgentLocalVisualGibsonWaypoint):
     This agent uses the neural waypoint for navigation, but it also computes the ground truth waypoint
     for dagger training.
     """
+
     def __init__(self, **kwargs):
         super(AgentLocalVisualGibsonWaypointDagger, self).__init__(**kwargs)
         self.gt_global_waypoint = None
@@ -664,45 +714,47 @@ class RCCarAgentLocal(AgentLocal):
     def __init__(self, params, noisy_actuation=False, **kwargs):
         self.noisy_actuation = noisy_actuation
 
-        self.steer_range = params.get('steer_range', required=True)
-        self.steer_speed_limit = params.get('steer_speed_limit', required=True)
+        self.steer_range = params.get("steer_range", required=True)
+        self.steer_speed_limit = params.get("steer_speed_limit", required=True)
 
         self.steering = 0.0
         self.dsteering = 0.0  # delta steering. Used for visualization.
         self.angular_accel = 0.0
 
-        self.L = params.get('length', required=True)
-        self.W = params.get('width', required=True)
+        self.L = params.get("length", required=True)
+        self.W = params.get("width", required=True)
 
-        control_points_table = params.get('control_points', required=True)
+        control_points_table = params.get("control_points", required=True)
         key = list(control_points_table.keys())[0]
         props = list(control_points_table.values())[0]
-        prop_keys = [_.strip() for _ in key.split(',')]
+        prop_keys = [_.strip() for _ in key.split(",")]
         control_point_properties = []
         for prop in props:
             control_point_properties.append(dict(zip(prop_keys, prop)))
         self.control_point_properties = control_point_properties
 
-        control_points = np.array([(prop['x'], prop['y'])
-                                   for prop in control_point_properties],
-                                  np.float32)
+        control_points = np.array(
+            [(prop["x"], prop["y"]) for prop in control_point_properties], np.float32
+        )
 
         super(RCCarAgentLocal, self).__init__(control_points=control_points, **kwargs)
 
     def save_state(self):
         state1 = super(RCCarAgentLocal, self).save_state()
-        state2 = deepcopy({
-            'steering': self.steering,
-            'dsteering': self.dsteering,
-            'angular_accel': self.angular_accel
-        })
+        state2 = deepcopy(
+            {
+                "steering": self.steering,
+                "dsteering": self.dsteering,
+                "angular_accel": self.angular_accel,
+            }
+        )
         state1.update(state2)
         return state1
 
     def restore_state(self, state):
-        self.steering = deepcopy(state['steering'])
-        self.dsteering = deepcopy(state['dsteering'])
-        self.angular_accel = deepcopy(state['angular_accel'])
+        self.steering = deepcopy(state["steering"])
+        self.dsteering = deepcopy(state["dsteering"])
+        self.angular_accel = deepcopy(state["angular_accel"])
         super(RCCarAgentLocal, self).restore_state(state)
 
     def accel_size(self):
@@ -710,24 +762,31 @@ class RCCarAgentLocal(AgentLocal):
         return 2
 
     def get_boundary_control_points(self):
-        return [self.control_points[i] for i in xrange(len(self.control_points))
-                if self.control_point_properties[i]['is_boundary']]
+        return [
+            self.control_points[i]
+            for i in xrange(len(self.control_points))
+            if self.control_point_properties[i]["is_boundary"]
+        ]
 
     def get_local_jacobian(self, p):
-        jacobian = np.array([[1, 0, -p[1]],
-                             [0, 1, p[0]]], np.float32)
+        jacobian = np.array([[1, 0, -p[1]], [0, 1, p[0]]], np.float32)
 
         beta = self.get_beta()
         v = self.get_signed_velocity_norm()
 
         # transform [ddx, ddy, ddtheta] into [dv, dsteering]
         # FIXME: this is not rigorous.
-        transform = np.array([
-            [1, 0],
-            [0, 0],
-            [np.sin(beta * 2.0) / self.L,
-             4 * v * np.cos(2.0 * beta) / (3 * np.cos(self.steering)**2 + 1)]
-        ], np.float32)
+        transform = np.array(
+            [
+                [1, 0],
+                [0, 0],
+                [
+                    np.sin(beta * 2.0) / self.L,
+                    4 * v * np.cos(2.0 * beta) / (3 * np.cos(self.steering) ** 2 + 1),
+                ],
+            ],
+            np.float32,
+        )
 
         return np.dot(jacobian, transform)
 
@@ -735,9 +794,9 @@ class RCCarAgentLocal(AgentLocal):
         return np.arctan(np.tan(self.steering) / 2.0)
 
     def get_signed_velocity_norm(self):
-        '''
+        """
         :return: the signed velocity along the heading direction.
-        '''
+        """
         heading_dir = np.array([np.cos(self.heading), np.sin(self.heading)], np.float32)
         return np.dot(self.velocity, heading_dir)
 
@@ -780,8 +839,13 @@ class RCCarAgentLocal(AgentLocal):
     def collide(self, tolerance=0.075):
         global_pos = self.get_global_control_points_pos()
         x1, y1 = self.pos
-        lines = np.concatenate([np.array([[x1, y1]] * len(global_pos), np.float32),
-                                np.array(global_pos, np.float32)], axis=1)
+        lines = np.concatenate(
+            [
+                np.array([[x1, y1]] * len(global_pos), np.float32),
+                np.array(global_pos, np.float32),
+            ],
+            axis=1,
+        )
         return not all(self.map.no_touch_batch(lines, tolerance=tolerance))
         # Equivalent to
         # for i in xrange(len(global_pos)):
@@ -809,23 +873,33 @@ class RCCarAgentLocalVisualGibson(RCCarAgentLocal, AgentLocalVisualGibson):
     pass
 
 
-class RCCarAgentLocalVisualGibsonWaypoint(RCCarAgentLocal, AgentLocalVisualGibsonWaypoint):
+class RCCarAgentLocalVisualGibsonWaypoint(
+    RCCarAgentLocal, AgentLocalVisualGibsonWaypoint
+):
     pass
 
 
-class RCCarAgentLocalLIDARVisualGibsonWaypoint(RCCarAgentLocalLIDAR, AgentLocalVisualGibsonWaypoint):
+class RCCarAgentLocalLIDARVisualGibsonWaypoint(
+    RCCarAgentLocalLIDAR, AgentLocalVisualGibsonWaypoint
+):
     pass
 
 
-class RCCarAgentLocalLIDARVisualGibsonWaypointDagger(RCCarAgentLocalLIDAR, AgentLocalVisualGibsonWaypointDagger):
+class RCCarAgentLocalLIDARVisualGibsonWaypointDagger(
+    RCCarAgentLocalLIDAR, AgentLocalVisualGibsonWaypointDagger
+):
     pass
 
 
-class RCCarAgentLocalVisualGibsonWaypointDagger(RCCarAgentLocal, AgentLocalVisualGibsonWaypointDagger):
+class RCCarAgentLocalVisualGibsonWaypointDagger(
+    RCCarAgentLocal, AgentLocalVisualGibsonWaypointDagger
+):
     pass
 
 
-class RCCarAgentLocalVisualGibsonWaypointRef(RCCarAgentLocal, AgentLocalVisualGibsonWaypointRef):
+class RCCarAgentLocalVisualGibsonWaypointRef(
+    RCCarAgentLocal, AgentLocalVisualGibsonWaypointRef
+):
     pass
 
 

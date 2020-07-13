@@ -1,21 +1,26 @@
 import copy
-import os
-import sys
-import time
-import yaml
-import torch
-import torch.nn.functional as F
 import math
+import os
 import random
 import subprocess
-import zmq
+import sys
+import time
+
 import numpy as np
+import pudb
+import torch
+import torch.nn.functional as F
+import zmq
+
 import msgpack
 import msgpack_numpy
-msgpack_numpy.patch()
+import yaml
+from rmp_nav.common.utils import pprint_dict
 
 from . import networks
-from rmp_nav.common.utils import pprint_dict
+
+msgpack_numpy.patch()
+
 
 
 def make_nets(specs, device):

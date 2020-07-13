@@ -10,4 +10,4 @@ python -m topological_nav.tools.build_nav_graph \
 --env="${ENV}" \
 --graph_config="${GRAPH_CONFIG}" \
 --save_file="${SAVE_FILE}/graph.pickle" \
-| tee "$(dirname $GRAPH_CONFIG)/build_log.txt"
+#| tee "$(dirname $GRAPH_CONFIG)/build_log.txt"
