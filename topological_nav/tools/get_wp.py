@@ -7,6 +7,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pudb
+import torch
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from tqdm import tqdm
 
@@ -683,13 +684,19 @@ if __name__ == "__main__":
     def get_wp(model, ob, goal):
         agent = agent_factory.agents_dict[model["agent"]]()
         follower = model["follower"]
-        return follower.motion_policy.predict_waypoint(ob, goal)
+        pu.db
+        goal = (goal / 255).astype("float32")
+        ob = (ob / 255).astype("float32")
+        return (
+            follower.motion_policy.predict_waypoint(ob, goal),
+            follower.sparsifier.predict_reachability(ob, goal),
+        )
 
     def get_video_trajectory():
         # cap = cv2.VideoCapture("20200709_125258.mp4")
         #        cap = cv2.VideoCapture("20200709_142115.mp4")
-        # cap = cv2.VideoCapture("20200710_093518.mp4")
-        cap = cv2.VideoCapture("20200710_145453.mp4")
+        cap = cv2.VideoCapture("20200710_093518.mp4")
+        # cap = cv2.VideoCapture("20200710_145453.mp4")
         # Check if camera opened successfully
         if cap.isOpened() == False:
             IOError("Error opening video stream or file")
@@ -741,6 +748,7 @@ if __name__ == "__main__":
             device=FLAGS.device, **str_to_dict(FLAGS.model_param)
         )
         wps = []
+        reachability = []
         for frame in tqdm(range(trajectory.shape[0])):
             #            goal_frame = min(frame + 50, trajectory.shape[0] - 11)
             #            goal = trajectory[goal_frame - 5 : goal_frame + 6, :, :, :]
@@ -749,10 +757,15 @@ if __name__ == "__main__":
             ob = trajectory[frame, :, :, :]
             ob = np.swapaxes(ob, 0, 2)
             ob = np.swapaxes(ob, 1, 2)
-            wp = get_wp(model, ob, goal)
+            wp, r = get_wp(model, ob, goal)
             wps.append(wp)
+            reachability.append(r)
+
         wps = np.asarray(wps)
+        reachability = np.asarray(reachability)
+        pu.db
         np.save("./points.npy", wps)
+        np.save("./reach.npy", reachability)
 
     create_visual_wp_video()
     # frontend()
