@@ -11,7 +11,7 @@ from topological_nav.reachability.planning import (
     update_nav_graph,
 )
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 def _make_maps(map_names):
@@ -42,6 +42,7 @@ class DatasetRealTrace(object):
                 img_files = sorted(glob.glob(os.path.join(data_dir, d, "*.tiff")))
                 for fn in img_files:
                     basename = os.path.splitext(os.path.basename(fn))[0]
+                    basename = '00000'
                     meta_file = os.path.join(data_dir, d, "%s.yaml" % basename)
                     metadata = yaml.load(open(meta_file).read(), yaml.SafeLoader)
                     samples.append((fn, metadata))
@@ -111,7 +112,8 @@ if __name__ == "__main__":
     else:
         raise RuntimeError("Unknown graph type: %s" % graph_type)
 
-    data_source = graph_config.get("data_source", "real")
+##    data_source = graph_config.get("data_source", "real")
+    data_source = graph_config.get("data_source", "gibson")
     pu.db
 
     if data_source == "gibson":
@@ -123,7 +125,7 @@ if __name__ == "__main__":
 
     elif data_source == "real":
         map_name = graph_config["map"]
-        #        map = _make_maps([map_name])[0]
+        map = _make_maps([map_name])[0]
         dataset = DatasetRealTrace(data_dir=graph_config["data_dir"], map_name=map_name)
 
     else:
@@ -171,6 +173,8 @@ if __name__ == "__main__":
     nav_graph.extra["model"] = graph_config["model"]
     nav_graph.extra["env"] = FLAGS.env
     nav_graph.extra["traj_info"] = traj_info_dict  # Useful for visualization, etc.
+    import pudb
+    pu.db
 
     nav_graph.save(FLAGS.save_file)
     nav_graph.visualize(
